@@ -15,23 +15,23 @@ class MixedOp(nn.Module):
         self.m_ops = nn.ModuleList()
         self.p = p
         for i in range(len(switch)):
-            if switch[i]:
+            if switch[i]: # 这次不是所有的PRIMITIVES中op都会被选择计算，要根据switch来选择，计算self.m_ops
                 primitive = PRIMITIVES[i]
                 op = OPS[primitive](C, stride, False)
                 if 'pool' in primitive:
                     op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
-                if isinstance(op, Identity) and p > 0:
+                if isinstance(op, Identity) and p > 0: #如果op是个恒等映射操作，则再其后面加上Dropout，参数为p
                     op = nn.Sequential(op, nn.Dropout(self.p))
                 self.m_ops.append(op)
                 
-    def update_p(self):
+    def update_p(self): #更新Dropout中的参数p
         for op in self.m_ops:
             if isinstance(op, nn.Sequential):
                 if isinstance(op[0], Identity):
                     op[1].p = self.p
                     
     def forward(self, x, weights):
-        return sum(w * op(x) for w, op in zip(weights, self.m_ops))
+        return sum(w * op(x) for w, op in zip(weights, self.m_ops)) #还是对m_ops中的操作加权求和
 
 
 class Cell(nn.Module):
@@ -50,11 +50,11 @@ class Cell(nn.Module):
 
         self.cell_ops = nn.ModuleList()
         switch_count = 0
-        for i in range(self._steps):
-            for j in range(2+i):
+        for i in range(self._steps): #遍历每个计算Node
+            for j in range(2+i): #遍历对应Node的输入Path
                 stride = 2 if reduction and j < 2 else 1
-                op = MixedOp(C, stride, switch=switches[switch_count], p=self.p)
-                self.cell_ops.append(op)
+                op = MixedOp(C, stride, switch=switches[switch_count], p=self.p) # switch_count标志第几条path，switches[switch_count]标示该path哪些op处于开状态
+                self.cell_ops.append(op) #一个Cell中所有的path
                 switch_count = switch_count + 1
     
     def update_p(self):
@@ -88,12 +88,12 @@ class Network(nn.Module):
         self.p = p
         self.switches_normal = switches_normal
         switch_ons = []
-        for i in range(len(switches_normal)):
+        for i in range(len(switches_normal)): #统计下每条path上有多少个op出于kai状态
             ons = 0
             for j in range(len(switches_normal[i])):
                 if switches_normal[i][j]:
                     ons = ons + 1
-            switch_ons.append(ons)
+            switch_ons.append(ons) #ons对于每条path应该都是一样的
             ons = 0
         self.switch_on = switch_ons[0]
 
@@ -152,9 +152,9 @@ class Network(nn.Module):
         return self._criterion(logits, target) 
 
     def _initialize_alphas(self):
-        k = sum(1 for i in range(self._steps) for n in range(2+i))
-        num_ops = self.switch_on
-        self.alphas_normal = nn.Parameter(torch.FloatTensor(1e-3*np.random.randn(k, num_ops)))
+        k = sum(1 for i in range(self._steps) for n in range(2+i)) #一个Cell中path数
+        num_ops = self.switch_on #没条path中op数，这个数随着训练是逐渐减少的
+        self.alphas_normal = nn.Parameter(torch.FloatTensor(1e-3*np.random.randn(k, num_ops))) # 把结构参数加入到model的paramters中
         self.alphas_reduce = nn.Parameter(torch.FloatTensor(1e-3*np.random.randn(k, num_ops)))
         self._arch_parameters = [
             self.alphas_normal,
